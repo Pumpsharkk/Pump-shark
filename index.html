@@ -76,6 +76,20 @@ input[type=text]{width:100%;background:rgba(0,220,255,0.05);border:1px solid rgb
 input[type=text]:focus{border-color:#00e5ff}
 input[type=text]::placeholder{color:#2a6a88}
 
+/* WALLET CONNECT */
+.wallet-box{width:100%;margin-bottom:10px}
+.btn-wallet{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:14px;border:none;border-radius:13px;font-family:'Arial Black',Arial,sans-serif;font-size:16px;font-weight:900;letter-spacing:1px;cursor:pointer;background:linear-gradient(135deg,#ab9ff2,#534bb1);color:#fff;box-shadow:0 4px 18px rgba(171,159,242,0.3);transition:transform .1s,opacity .1s}
+.btn-wallet:active{transform:scale(.97);opacity:.9}
+.btn-wallet img{width:22px;height:22px}
+.wallet-connected{display:flex;align-items:center;gap:10px;background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.25);border-radius:12px;padding:12px 14px;width:100%;margin-bottom:8px}
+.wallet-connected .wc-icon{font-size:20px}
+.wallet-connected .wc-info{flex:1}
+.wallet-connected .wc-info strong{display:block;color:#00ff88;font-size:13px;font-family:Arial,sans-serif}
+.wallet-connected .wc-info span{font-size:11px;color:#5a9ab8;font-family:monospace}
+.wc-disconnect{background:transparent;border:1px solid rgba(255,60,0,0.3);color:#ff6644;border-radius:8px;padding:6px 10px;font-size:11px;cursor:pointer;font-family:Arial,sans-serif}
+.no-phantom-hint{font-size:11px;color:#2a6a88;text-align:center;margin-top:4px;font-family:Arial,sans-serif}
+.no-phantom-hint a{color:#00bcd4}
+
 /* LB */
 .lb-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(0,220,255,0.07)}
 .lb-row:last-child{border-bottom:none}
@@ -200,7 +214,20 @@ input[type=text]::placeholder{color:#2a6a88}
         <div class="ctitle">Your Nickname</div>
         <input type="text" id="nameInput" placeholder="e.g. SharkKing" maxlength="18" autocomplete="off">
         <div class="ctitle" style="margin-top:8px">Solana Wallet <span style="color:#00ff88;font-family:Arial">(for prizes)</span></div>
-        <input type="text" id="walletInput" placeholder="Your Solana wallet address" autocomplete="off">
+        <div class="wallet-box" id="walletBoxDisconnected">
+          <button class="btn-wallet" id="connectPhantomBtn" onclick="connectPhantom()">
+            👻 Connect Phantom Wallet
+          </button>
+          <div class="no-phantom-hint">Don't have Phantom? <a href="https://phantom.app" target="_blank">Get it here</a></div>
+        </div>
+        <div class="wallet-connected" id="walletBoxConnected" style="display:none">
+          <div class="wc-icon">✅</div>
+          <div class="wc-info">
+            <strong>Wallet Connected</strong>
+            <span id="connectedAddrShort"></span>
+          </div>
+          <button class="wc-disconnect" onclick="disconnectPhantom()">Disconnect</button>
+        </div>
         <div style="font-size:10px;color:#2a6a88;font-family:Arial">We verify your $PUMP SHARK balance via this address</div>
       </div>
       <div class="tok-req">
@@ -436,16 +463,78 @@ const FISH_DEF = [
   { name:'shark_npc', sz:[35,55],  spd:1.1, pts:0,   cols:['#546e7a','#78909c'],             school:false, danger:true  },
 ];
 
+// ─── PHANTOM WALLET ─────────────────────────────────────────
+let connectedWallet = null;
+
+function getPhantomProvider() {
+  if ('phantom' in window) {
+    const provider = window.phantom?.solana;
+    if (provider?.isPhantom) return provider;
+  }
+  return null;
+}
+
+async function connectPhantom() {
+  const provider = getPhantomProvider();
+  if (!provider) {
+    // No Phantom extension/app detected — on mobile, deep link to Phantom app browser
+    if (isMobile) {
+      const dappUrl = encodeURIComponent(window.location.href);
+      const ref = encodeURIComponent(window.location.origin);
+      window.location.href = `https://phantom.app/ul/browse/${dappUrl}?ref=${ref}`;
+      return;
+    }
+    toast('⚠️ Phantom wallet not found. Install it first!', 3500);
+    window.open('https://phantom.app', '_blank');
+    return;
+  }
+  try {
+    toast('👻 Opening Phantom...', 2000);
+    const resp = await provider.connect();
+    connectedWallet = resp.publicKey.toString();
+    showWalletConnected(connectedWallet);
+    toast('✅ Wallet connected!', 2000);
+  } catch (err) {
+    if (err.code === 4001) toast('❌ Connection rejected.', 2000);
+    else toast('⚠️ Could not connect wallet.', 2500);
+  }
+}
+
+function disconnectPhantom() {
+  const provider = getPhantomProvider();
+  if (provider) { try { provider.disconnect(); } catch {} }
+  connectedWallet = null;
+  document.getElementById('walletBoxConnected').style.display = 'none';
+  document.getElementById('walletBoxDisconnected').style.display = 'block';
+}
+
+function showWalletConnected(addr) {
+  document.getElementById('walletBoxDisconnected').style.display = 'none';
+  document.getElementById('walletBoxConnected').style.display = 'flex';
+  document.getElementById('connectedAddrShort').textContent = addr.slice(0,4) + '...' + addr.slice(-4);
+}
+
+// Try auto-reconnect (trusted app) on load
+window.addEventListener('load', async () => {
+  const provider = getPhantomProvider();
+  if (provider) {
+    try {
+      const resp = await provider.connect({ onlyIfTrusted: true });
+      connectedWallet = resp.publicKey.toString();
+      showWalletConnected(connectedWallet);
+    } catch {} // not previously trusted, ignore
+  }
+});
+
 // ─── BEGIN / RESTART ────────────────────────────────────────
 async function beginGame() {
   const name = document.getElementById('nameInput').value.trim();
-  const wallet = document.getElementById('walletInput').value.trim();
   if (!name) { toast('⚠️ Enter your nickname!'); return; }
-  if (!wallet || wallet.length < 32) { toast('⚠️ Enter a valid Solana wallet!'); return; }
+  if (!connectedWallet) { toast('⚠️ Connect your Phantom wallet first!', 3000); return; }
   toast('🔍 Checking token balance...');
-  const ok = await checkToken(wallet);
+  const ok = await checkToken(connectedWallet);
   if (!ok) { toast('❌ Need 10,000 $PUMP SHARK to play!', 3500); return; }
-  playerName = name; playerWallet = wallet;
+  playerName = name; playerWallet = connectedWallet;
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('show'));
   initGame();
 }
